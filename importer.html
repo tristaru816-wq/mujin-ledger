@@ -23,7 +23,7 @@ a{color:var(--gold2)}
 <main class="wrap">
 <div class="eyebrow">MUJIN LEDGER · SAFE MIGRATION</div>
 <h1 class="title">資料搬家工具</h1>
-<div class="sub">這個頁面不會保存你的密碼或記帳檔。登入 Firebase 後，選擇暮金 JSON 備份，再把有效紀錄寫入你自己的 <code>users/{uid}/records</code>。</div>
+<div class="sub">這個頁面不會保存你的密碼或記帳檔。V2.1 可匯入交易紀錄、帳戶基準與資金轉移，資料會寫入你自己的 Firebase 帳號。</div>
 
 <section class="card">
 <h2>① 登入暮金雲端</h2>
@@ -40,8 +40,11 @@ a{color:var(--gold2)}
 <div class="filebox"><input id="file" type="file" accept=".json,application/json"></div>
 <div id="preview" class="preview hidden">
 <div class="metric"><span>有效紀錄</span><b id="count">0</b></div>
+<div class="metric"><span>帳戶</span><b id="accountCount">0</b></div>
+<div class="metric"><span>資金轉移</span><b id="transferCount">0</b></div>
 <div class="metric"><span>收入合計</span><b id="income">0</b></div>
 <div class="metric"><span>支出合計</span><b id="expense">0</b></div>
+<div class="metric"><span>帳戶資產</span><b id="assetTotal">0</b></div>
 </div>
 <div id="fileStatus" class="status" style="margin-top:10px">尚未選擇檔案</div>
 </section>
@@ -66,56 +69,70 @@ const [{initializeApp},{getAuth,signInWithEmailAndPassword,signOut,onAuthStateCh
  import(base+'firebase-app.js'),import(base+'firebase-auth.js'),import(base+'firebase-firestore.js')
 ]);
 const app=initializeApp(CONFIG),auth=getAuth(app),db=getFirestore(app);
-let currentUser=null,parsedRecords=[];
+let currentUser=null,parsedRecords=[],parsedAccounts=[],parsedTransfers=[];
 const $=id=>document.getElementById(id);
 const money=n=>'NT$ '+Number(n||0).toLocaleString('zh-TW',{maximumFractionDigits:2});
 function setStatus(id,text,kind=''){const el=$(id);el.textContent=text;el.className='status'+(kind?' '+kind:'')}
 function valid(r){return r&&typeof r==='object'&&typeof r.description==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(String(r.date||''))&&Number.isFinite(Number(r.amount))&&Number(r.amount)>0&&['income','expense'].includes(r.type)}
-function normalize(r){return{id:String(r.id||crypto.randomUUID()),date:String(r.date),description:String(r.description).slice(0,120),amount:Number(r.amount),category:r.type==='income'?'收入':String(r.category||'其他').slice(0,20),type:r.type,createdAt:Number(r.createdAt||Date.now())}}
-function ready(){const ok=!!currentUser&&parsedRecords.length>0;$('importBtn').disabled=!ok;$('verifyBtn').disabled=!currentUser}
+function normalize(r){const out={id:String(r.id||crypto.randomUUID()),date:String(r.date),description:String(r.description).slice(0,120),amount:Number(r.amount),category:r.type==='income'?'收入':String(r.category||'其他').slice(0,20),type:r.type,createdAt:Number(r.createdAt||Date.now())};if(r.accountId)out.accountId=String(r.accountId).slice(0,80);if(r.originalCurrency)out.originalCurrency=String(r.originalCurrency).slice(0,8);if(Number(r.originalAmount)>0)out.originalAmount=Number(r.originalAmount);if(Number(r.exchangeRate)>0)out.exchangeRate=Number(r.exchangeRate);return out}
+function validAccount(a){return a&&typeof a==='object'&&typeof a.id==='string'&&typeof a.name==='string'&&Number.isFinite(Number(a.balance))&&Number(a.balance)>=0}
+function normalizeAccount(a){return{id:String(a.id).slice(0,80),name:String(a.name).slice(0,40),balance:Number(a.balance),kind:['cash','bank','savings'].includes(a.kind)?a.kind:'bank',createdAt:Number(a.createdAt||Date.now()),updatedAt:Number(a.updatedAt||Date.now())}}
+function validTransfer(t){return t&&typeof t==='object'&&typeof t.id==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(String(t.date||''))&&Number(t.amount)>0&&typeof t.fromAccountId==='string'&&typeof t.toAccountId==='string'&&t.fromAccountId!==t.toAccountId}
+function normalizeTransfer(t){return{id:String(t.id).slice(0,120),date:String(t.date),description:String(t.description||'帳戶轉移').slice(0,80),amount:Number(t.amount),fromAccountId:String(t.fromAccountId).slice(0,80),toAccountId:String(t.toAccountId).slice(0,80),createdAt:Number(t.createdAt||Date.now())}}
+function ready(){const count=parsedRecords.length+parsedAccounts.length+parsedTransfers.length;const ok=!!currentUser&&count>0;$('importBtn').disabled=!ok;$('verifyBtn').disabled=!currentUser}
 onAuthStateChanged(auth,u=>{currentUser=u;if(u){setStatus('authStatus','已登入：'+(u.email||'')+'\nUID：'+u.uid,'ok')}else setStatus('authStatus','尚未登入');ready()});
 $('loginBtn').onclick=async()=>{try{setStatus('authStatus','登入中…');await signInWithEmailAndPassword(auth,$('email').value.trim(),$('password').value);$('password').value=''}catch(e){setStatus('authStatus','登入失敗：'+(e.code||e.message),'bad')}};
 $('logoutBtn').onclick=async()=>{await signOut(auth);setStatus('importStatus','已登出')};
 async function readSelectedFile(file){
- if(!file){parsedRecords=[];ready();return}
+ if(!file){parsedRecords=[];parsedAccounts=[];parsedTransfers=[];ready();return}
  try{
   setStatus('fileStatus','正在讀取 '+file.name+'…');
   const text=await file.text();
   const obj=JSON.parse(text);
-  const arr=Array.isArray(obj)?obj:obj.records;
-  if(!Array.isArray(arr))throw new Error('找不到 records 陣列');
-  const normalized=arr.filter(valid).map(normalize);
-  const ids=new Set();parsedRecords=normalized.filter(r=>{if(ids.has(r.id))return false;ids.add(r.id);return true});
-  if(!parsedRecords.length)throw new Error('沒有有效紀錄');
+  const arr=Array.isArray(obj)?obj:(Array.isArray(obj.records)?obj.records:[]);
+  const accounts=Array.isArray(obj.accounts)?obj.accounts:[];
+  const transfers=Array.isArray(obj.transfers)?obj.transfers:[];
+  parsedRecords=arr.filter(valid).map(normalize);
+  parsedAccounts=accounts.filter(validAccount).map(normalizeAccount);
+  parsedTransfers=transfers.filter(validTransfer).map(normalizeTransfer);
+  if(!parsedRecords.length&&!parsedAccounts.length&&!parsedTransfers.length)throw new Error('沒有可匯入的交易、帳戶或資金轉移');
   const inc=parsedRecords.filter(r=>r.type==='income').reduce((a,r)=>a+r.amount,0);
   const exp=parsedRecords.filter(r=>r.type==='expense').reduce((a,r)=>a+r.amount,0);
-  $('count').textContent=parsedRecords.length;$('income').textContent=money(inc);$('expense').textContent=money(exp);$('preview').classList.remove('hidden');
+  const asset=parsedAccounts.reduce((a,r)=>a+r.balance,0);
+  $('count').textContent=parsedRecords.length;$('accountCount').textContent=parsedAccounts.length;$('transferCount').textContent=parsedTransfers.length;
+  $('income').textContent=money(inc);$('expense').textContent=money(exp);$('assetTotal').textContent=money(asset);$('preview').classList.remove('hidden');
   setStatus('fileStatus','已讀取：'+file.name,'ok');ready()
- }catch(e){parsedRecords=[];$('preview').classList.add('hidden');setStatus('fileStatus','檔案解析失敗：'+e.message,'bad');ready()}
+ }catch(e){parsedRecords=[];parsedAccounts=[];parsedTransfers=[];$('preview').classList.add('hidden');setStatus('fileStatus','檔案解析失敗：'+e.message,'bad');ready()}
 }
 $('file').addEventListener('change',e=>readSelectedFile(e.target.files&&e.target.files[0]));
 $('file').addEventListener('input',e=>readSelectedFile(e.target.files&&e.target.files[0]));
 $('importBtn').onclick=async()=>{
- if(!currentUser||!parsedRecords.length)return;
- $('importBtn').disabled=true;$('fill').style.width='5%';setStatus('importStatus','正在比對目前雲端紀錄…');
+ if(!currentUser||(parsedRecords.length+parsedAccounts.length+parsedTransfers.length)===0)return;
+ $('importBtn').disabled=true;$('fill').style.width='5%';setStatus('importStatus','正在比對目前雲端資料…');
  try{
-  const col=collection(db,'users',currentUser.uid,'records');
-  const before=await getDocs(col);const existing=new Set(before.docs.map(d=>d.id));
-  const todo=parsedRecords.filter(r=>!existing.has(r.id));
-  if(!todo.length){$('fill').style.width='100%';setStatus('importStatus','這些紀錄已經全部存在，無需重複匯入。','ok');ready();return}
-  let done=0;
-  for(let i=0;i<todo.length;i+=350){
-    const part=todo.slice(i,i+350),batch=writeBatch(db);
-    part.forEach(r=>batch.set(doc(db,'users',currentUser.uid,'records',r.id),r));
-    await batch.commit();done+=part.length;$('fill').style.width=(10+done/todo.length*80)+'%';setStatus('importStatus','已寫入 '+done+' / '+todo.length+' 筆…');
+  let addedRecords=0,addedAccounts=0,addedTransfers=0;
+  async function mergeInto(name,list){
+    if(!list.length)return 0;
+    const col=collection(db,'users',currentUser.uid,name),before=await getDocs(col),existing=new Set(before.docs.map(d=>d.id)),todo=list.filter(r=>!existing.has(r.id));
+    let done=0;
+    for(let i=0;i<todo.length;i+=300){const part=todo.slice(i,i+300),batch=writeBatch(db);part.forEach(r=>batch.set(doc(db,'users',currentUser.uid,name,r.id),r));await batch.commit();done+=part.length}
+    return done;
   }
-  const after=await getDocs(col);$('fill').style.width='100%';
-  setStatus('importStatus','匯入完成：本次新增 '+done+' 筆。\n目前 Firestore records 共 '+after.size+' 筆。','ok');
+  addedRecords=await mergeInto('records',parsedRecords);$('fill').style.width='40%';
+  addedAccounts=await mergeInto('accounts',parsedAccounts);$('fill').style.width='70%';
+  addedTransfers=await mergeInto('transfers',parsedTransfers);$('fill').style.width='90%';
+  const [r,a,t]=await Promise.all([
+    getDocs(collection(db,'users',currentUser.uid,'records')),
+    getDocs(collection(db,'users',currentUser.uid,'accounts')),
+    getDocs(collection(db,'users',currentUser.uid,'transfers'))
+  ]);
+  $('fill').style.width='100%';
+  setStatus('importStatus','匯入完成：交易 +'+addedRecords+'、帳戶 +'+addedAccounts+'、轉移 +'+addedTransfers+'。\n目前 records '+r.size+' 筆｜accounts '+a.size+' 筆｜transfers '+t.size+' 筆。','ok');
  }catch(e){$('fill').style.width='0%';setStatus('importStatus','匯入失敗：'+(e.code||'')+'\n'+(e.message||e),'bad')}
  ready()
 };
 $('verifyBtn').onclick=async()=>{
- if(!currentUser)return;try{const snap=await getDocs(collection(db,'users',currentUser.uid,'records'));setStatus('importStatus','目前 Firestore records 共 '+snap.size+' 筆。','ok')}catch(e){setStatus('importStatus','讀取失敗：'+(e.code||'')+'\n'+(e.message||e),'bad')}
+ if(!currentUser)return;try{const [r,a,t]=await Promise.all([getDocs(collection(db,'users',currentUser.uid,'records')),getDocs(collection(db,'users',currentUser.uid,'accounts')),getDocs(collection(db,'users',currentUser.uid,'transfers'))]);setStatus('importStatus','目前 records '+r.size+' 筆｜accounts '+a.size+' 筆｜transfers '+t.size+' 筆。','ok')}catch(e){setStatus('importStatus','讀取失敗：'+(e.code||'')+'\n'+(e.message||e),'bad')}
 };
 </script>
 </body>
