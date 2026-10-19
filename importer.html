@@ -14,7 +14,7 @@ h2{font-size:17px;margin:0 0 12px}.grid{display:grid;gap:10px}label{font-size:12
 input[type=email],input[type=password]{width:100%;border:1px solid #4b3941;border-radius:13px;padding:13px 14px;background:#0e0b0d;color:#fff;outline:none}
 button{border:0;border-radius:13px;padding:13px 15px;cursor:pointer}.primary{background:linear-gradient(135deg,#f0d49c,#c89f5d);color:#22170d;font-weight:800}.secondary{background:#241a20;color:#eadfd9;border:1px solid #503843}.danger{color:#ffb2bd}
 .row{display:flex;gap:10px;flex-wrap:wrap}.row>*{flex:1;min-width:120px}.status{font-size:13px;line-height:1.55;color:var(--muted);white-space:pre-wrap;word-break:break-word}.status.ok{color:var(--ok)}.status.bad{color:var(--bad)}
-.filebox{border:1px dashed #6c4b59;border-radius:16px;padding:14px;background:rgba(255,255,255,.025)}input[type=file]{width:100%;color:#ddd;font-size:13px}.preview{margin-top:12px;display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.metric{padding:12px;border-radius:13px;background:#100c0f;border:1px solid #32242a}.metric span{display:block;color:var(--muted);font-size:10px}.metric b{display:block;margin-top:6px;font-size:18px;color:var(--gold2)}
+.filebox{border:1px dashed #6c4b59;border-radius:16px;padding:14px;background:rgba(255,255,255,.025)}input[type=file]{width:100%;color:#ddd;font-size:13px}.pastebox{margin-top:12px}.pastebox textarea{width:100%;min-height:180px;resize:vertical;border:1px solid #4b3941;border-radius:14px;padding:13px;background:#0e0b0d;color:#fff;font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;outline:none}.pastebox button{margin-top:9px;width:100%}.preview{margin-top:12px;display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.metric{padding:12px;border-radius:13px;background:#100c0f;border:1px solid #32242a}.metric span{display:block;color:var(--muted);font-size:10px}.metric b{display:block;margin-top:6px;font-size:18px;color:var(--gold2)}
 .note{font-size:12px;color:#aa9da1;line-height:1.65}.hidden{display:none}.bar{height:9px;border-radius:99px;background:#120d10;border:1px solid #35262c;overflow:hidden}.fill{height:100%;width:0;background:linear-gradient(90deg,#8d2337,#d9b678);transition:width .2s}
 a{color:var(--gold2)}
 </style>
@@ -38,6 +38,10 @@ a{color:var(--gold2)}
 <section class="card">
 <h2>② 選擇 JSON 備份</h2>
 <div class="filebox"><input id="file" type="file" accept=".json,application/json"></div>
+<div class="pastebox">
+  <textarea id="pasteJson" placeholder="如果 iPhone 無法下載檔案，可直接把 ChatGPT 提供的 JSON 全部貼到這裡。"></textarea>
+  <button class="secondary" id="parsePasteBtn" type="button">解析貼上的 JSON</button>
+</div>
 <div id="preview" class="preview hidden">
 <div class="metric"><span>有效紀錄</span><b id="count">0</b></div>
 <div class="metric"><span>帳戶</span><b id="accountCount">0</b></div>
@@ -83,12 +87,9 @@ function ready(){const count=parsedRecords.length+parsedAccounts.length+parsedTr
 onAuthStateChanged(auth,u=>{currentUser=u;if(u){setStatus('authStatus','已登入：'+(u.email||'')+'\nUID：'+u.uid,'ok')}else setStatus('authStatus','尚未登入');ready()});
 $('loginBtn').onclick=async()=>{try{setStatus('authStatus','登入中…');await signInWithEmailAndPassword(auth,$('email').value.trim(),$('password').value);$('password').value=''}catch(e){setStatus('authStatus','登入失敗：'+(e.code||e.message),'bad')}};
 $('logoutBtn').onclick=async()=>{await signOut(auth);setStatus('importStatus','已登出')};
-async function readSelectedFile(file){
- if(!file){parsedRecords=[];parsedAccounts=[];parsedTransfers=[];deleteRecordIds=[];ready();return}
+function parseJsonText(text,label='貼上內容'){
  try{
-  setStatus('fileStatus','正在讀取 '+file.name+'…');
-  const text=await file.text();
-  const obj=JSON.parse(text);
+  const obj=JSON.parse(String(text||''));
   const arr=Array.isArray(obj)?obj:(Array.isArray(obj.records)?obj.records:[]);
   const accounts=Array.isArray(obj.accounts)?obj.accounts:[];
   const transfers=Array.isArray(obj.transfers)?obj.transfers:[];
@@ -96,17 +97,25 @@ async function readSelectedFile(file){
   parsedRecords=arr.filter(valid).map(normalize);
   parsedAccounts=accounts.filter(validAccount).map(normalizeAccount);
   parsedTransfers=transfers.filter(validTransfer).map(normalizeTransfer);
-  if(!parsedRecords.length&&!parsedAccounts.length&&!parsedTransfers.length)throw new Error('沒有可匯入的交易、帳戶或資金轉移');
+  if(!parsedRecords.length&&!parsedAccounts.length&&!parsedTransfers.length&&!deleteRecordIds.length)throw new Error('沒有可匯入或修正的資料');
   const inc=parsedRecords.filter(r=>r.type==='income').reduce((a,r)=>a+r.amount,0);
   const exp=parsedRecords.filter(r=>r.type==='expense').reduce((a,r)=>a+r.amount,0);
   const asset=parsedAccounts.reduce((a,r)=>a+r.balance,0);
   $('count').textContent=parsedRecords.length;$('accountCount').textContent=parsedAccounts.length;$('transferCount').textContent=parsedTransfers.length;
   $('income').textContent=money(inc);$('expense').textContent=money(exp);$('assetTotal').textContent=money(asset);$('preview').classList.remove('hidden');
-  setStatus('fileStatus','已讀取：'+file.name+(deleteRecordIds.length?'｜將修正 '+deleteRecordIds.length+' 筆舊紀錄':''),'ok');ready()
- }catch(e){parsedRecords=[];parsedAccounts=[];parsedTransfers=[];deleteRecordIds=[];$('preview').classList.add('hidden');setStatus('fileStatus','檔案解析失敗：'+e.message,'bad');ready()}
+  setStatus('fileStatus','已讀取：'+label+(deleteRecordIds.length?'｜將修正 '+deleteRecordIds.length+' 筆舊紀錄':''),'ok');ready();return true
+ }catch(e){parsedRecords=[];parsedAccounts=[];parsedTransfers=[];deleteRecordIds=[];$('preview').classList.add('hidden');setStatus('fileStatus','資料解析失敗：'+e.message,'bad');ready();return false}
+}
+async function readSelectedFile(file){
+ if(!file){parsedRecords=[];parsedAccounts=[];parsedTransfers=[];deleteRecordIds=[];ready();return}
+ try{
+  setStatus('fileStatus','正在讀取 '+file.name+'…');
+  const text=await file.text();parseJsonText(text,file.name)
+ }catch(e){setStatus('fileStatus','無法讀取檔案：'+e.message,'bad')}
 }
 $('file').addEventListener('change',e=>readSelectedFile(e.target.files&&e.target.files[0]));
 $('file').addEventListener('input',e=>readSelectedFile(e.target.files&&e.target.files[0]));
+$('parsePasteBtn').onclick=()=>{const text=$('pasteJson').value.trim();if(!text){setStatus('fileStatus','請先貼上 JSON 內容','bad');return}parseJsonText(text,'貼上的 JSON')};
 $('importBtn').onclick=async()=>{
  if(!currentUser||(parsedRecords.length+parsedAccounts.length+parsedTransfers.length)===0)return;
  $('importBtn').disabled=true;$('fill').style.width='5%';setStatus('importStatus','正在比對目前雲端資料…');
