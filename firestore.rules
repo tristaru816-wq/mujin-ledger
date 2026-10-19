@@ -1,15 +1,17 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    function signedInAs(userId) {
+      return request.auth != null && request.auth.uid == userId;
+    }
+
     match /users/{userId}/records/{recordId} {
-      function owner() {
-        return request.auth != null && request.auth.uid == userId;
-      }
       function validRecord() {
         return request.resource.data.keys().hasAll([
           'id', 'date', 'description', 'amount', 'category', 'type', 'createdAt'
         ]) && request.resource.data.keys().hasOnly([
-          'id', 'date', 'description', 'amount', 'category', 'type', 'createdAt'
+          'id', 'date', 'description', 'amount', 'category', 'type', 'createdAt',
+          'accountId', 'originalCurrency', 'originalAmount', 'exchangeRate'
         ]) && request.resource.data.id is string
            && request.resource.data.id == recordId
            && request.resource.data.id.size() <= 120
@@ -24,11 +26,82 @@ service cloud.firestore {
            && request.resource.data.category is string
            && request.resource.data.category.size() <= 20
            && request.resource.data.type in ['income', 'expense']
+           && request.resource.data.createdAt is number
+           && (!('accountId' in request.resource.data) || (
+                request.resource.data.accountId is string &&
+                request.resource.data.accountId.size() <= 80
+              ))
+           && (!('originalCurrency' in request.resource.data) || (
+                request.resource.data.originalCurrency is string &&
+                request.resource.data.originalCurrency.size() <= 8
+              ))
+           && (!('originalAmount' in request.resource.data) || (
+                request.resource.data.originalAmount is number &&
+                request.resource.data.originalAmount > 0
+              ))
+           && (!('exchangeRate' in request.resource.data) || (
+                request.resource.data.exchangeRate is number &&
+                request.resource.data.exchangeRate > 0
+              ));
+      }
+      allow read: if signedInAs(userId);
+      allow create, update: if signedInAs(userId) && validRecord();
+      allow delete: if signedInAs(userId);
+    }
+
+    match /users/{userId}/accounts/{accountId} {
+      function validAccount() {
+        return request.resource.data.keys().hasAll([
+          'id', 'name', 'balance', 'kind', 'createdAt', 'updatedAt'
+        ]) && request.resource.data.keys().hasOnly([
+          'id', 'name', 'balance', 'kind', 'createdAt', 'updatedAt'
+        ]) && request.resource.data.id is string
+           && request.resource.data.id == accountId
+           && request.resource.data.id.size() <= 80
+           && request.resource.data.name is string
+           && request.resource.data.name.size() > 0
+           && request.resource.data.name.size() <= 40
+           && request.resource.data.balance is number
+           && request.resource.data.balance >= 0
+           && request.resource.data.balance <= 999999999
+           && request.resource.data.kind in ['cash', 'bank', 'savings']
+           && request.resource.data.createdAt is number
+           && request.resource.data.updatedAt is number;
+      }
+      allow read: if signedInAs(userId);
+      allow create, update: if signedInAs(userId) && validAccount();
+      allow delete: if signedInAs(userId);
+    }
+
+    match /users/{userId}/transfers/{transferId} {
+      function validTransfer() {
+        return request.resource.data.keys().hasAll([
+          'id', 'date', 'description', 'amount',
+          'fromAccountId', 'toAccountId', 'createdAt'
+        ]) && request.resource.data.keys().hasOnly([
+          'id', 'date', 'description', 'amount',
+          'fromAccountId', 'toAccountId', 'createdAt'
+        ]) && request.resource.data.id is string
+           && request.resource.data.id == transferId
+           && request.resource.data.id.size() <= 120
+           && request.resource.data.date is string
+           && request.resource.data.date.size() == 10
+           && request.resource.data.description is string
+           && request.resource.data.description.size() > 0
+           && request.resource.data.description.size() <= 80
+           && request.resource.data.amount is number
+           && request.resource.data.amount > 0
+           && request.resource.data.amount <= 999999999
+           && request.resource.data.fromAccountId is string
+           && request.resource.data.fromAccountId.size() <= 80
+           && request.resource.data.toAccountId is string
+           && request.resource.data.toAccountId.size() <= 80
+           && request.resource.data.fromAccountId != request.resource.data.toAccountId
            && request.resource.data.createdAt is number;
       }
-      allow read: if owner();
-      allow create, update: if owner() && validRecord();
-      allow delete: if owner();
+      allow read: if signedInAs(userId);
+      allow create, update: if signedInAs(userId) && validTransfer();
+      allow delete: if signedInAs(userId);
     }
   }
 }
