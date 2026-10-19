@@ -11,3 +11,31 @@
 .pwa-guide-actions{display:flex;gap:10px}.pwa-guide-actions button{cursor:pointer;border-radius:12px;padding:14px 12px;font-size:14px;font-weight:700;min-height:48px}.pwa-guide-primary{border:0;background:linear-gradient(120deg,#e1bd87,#bc9462);color:#20181d;flex:1}.pwa-guide-secondary{border:1px solid rgba(217,184,133,.25);background:rgba(255,255,255,.035);color:#e5dad9;flex:0 0 37%}.pwa-guide-close{background:none;border:0;color:#c7b9bc;margin:-6px -8px 0 auto;padding:8px;cursor:pointer;font-size:21px}
 @media(min-width:720px){.pwa-guide-overlay{align-items:center}.pwa-guide{border-radius:22px}}
 @media(max-width:365px){.pwa-guide{padding:21px 16px}.pwa-guide h2{font-size:20px}.pwa-install-trigger{min-width:34px;height:35px}}
+
+/* 2026-10-19 | iOS home-screen status-bar collision + fully adaptive mobile topbar.
+   Keep the existing bookkeeping JS and Firebase untouched. */
+html,body{max-width:100%;overflow-x:hidden}
+.app{width:100%;max-width:480px}
+.topbar{height:auto;min-height:78px;gap:8px;padding-left:clamp(13px,4vw,23px);padding-right:clamp(13px,4vw,23px)}
+.topbar .brand{min-width:0;flex:1 1 auto;overflow:hidden;gap:clamp(6px,2.1vw,11px)}
+.topbar .brand>div:last-child{min-width:0}
+.topbar .brandmark{flex:0 0 34px}
+.topbar .brand strong{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:clamp(11px,3.4vw,15px);letter-spacing:clamp(1px,.55vw,3px)}
+.topbar .brand small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:clamp(7px,1.8vw,9px);letter-spacing:clamp(.7px,.33vw,2.25px)}
+.topbar .top-actions{flex:0 0 auto;gap:clamp(3px,1.5vw,8px)}
+.topbar .sync-pill{max-width:clamp(78px,23vw,125px);padding:6px 7px;min-width:0}
+.topbar .sync-pill span:last-child{overflow:hidden;text-overflow:ellipsis}
+.topbar #settingsOpen{flex:0 0 37px}
+@media(max-width:365px){
+ .topbar .brand small{display:none}
+ .topbar .brandmark{flex-basis:30px;width:30px;height:30px}
+ .topbar .sync-pill{max-width:82px}
+ .topbar .pwa-install-trigger{width:32px;min-width:32px;height:34px}
+ .topbar #settingsOpen{flex-basis:34px;width:34px;height:34px}
+}
+@media(display-mode:standalone) and (max-width:599px){
+ /* Older iOS home-screen installations may retain black-translucent.
+    Reserve top space even when WebKit reports safe-area-inset-top as 0px. */
+ .topbar{padding-top:calc(16px + max(env(safe-area-inset-top,0px),42px));min-height:calc(72px + max(env(safe-area-inset-top,0px),42px));padding-bottom:12px;align-items:flex-end}
+ .pwa-guide-overlay{padding-top:max(18px,env(safe-area-inset-top,0px))}
+}
