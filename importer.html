@@ -69,7 +69,7 @@ const [{initializeApp},{getAuth,signInWithEmailAndPassword,signOut,onAuthStateCh
  import(base+'firebase-app.js'),import(base+'firebase-auth.js'),import(base+'firebase-firestore.js')
 ]);
 const app=initializeApp(CONFIG),auth=getAuth(app),db=getFirestore(app);
-let currentUser=null,parsedRecords=[],parsedAccounts=[],parsedTransfers=[];
+let currentUser=null,parsedRecords=[],parsedAccounts=[],parsedTransfers=[],deleteRecordIds=[];
 const $=id=>document.getElementById(id);
 const money=n=>'NT$ '+Number(n||0).toLocaleString('zh-TW',{maximumFractionDigits:2});
 function setStatus(id,text,kind=''){const el=$(id);el.textContent=text;el.className='status'+(kind?' '+kind:'')}
@@ -84,7 +84,7 @@ onAuthStateChanged(auth,u=>{currentUser=u;if(u){setStatus('authStatus','已登�
 $('loginBtn').onclick=async()=>{try{setStatus('authStatus','登入中…');await signInWithEmailAndPassword(auth,$('email').value.trim(),$('password').value);$('password').value=''}catch(e){setStatus('authStatus','登入失敗：'+(e.code||e.message),'bad')}};
 $('logoutBtn').onclick=async()=>{await signOut(auth);setStatus('importStatus','已登出')};
 async function readSelectedFile(file){
- if(!file){parsedRecords=[];parsedAccounts=[];parsedTransfers=[];ready();return}
+ if(!file){parsedRecords=[];parsedAccounts=[];parsedTransfers=[];deleteRecordIds=[];ready();return}
  try{
   setStatus('fileStatus','正在讀取 '+file.name+'…');
   const text=await file.text();
@@ -92,6 +92,7 @@ async function readSelectedFile(file){
   const arr=Array.isArray(obj)?obj:(Array.isArray(obj.records)?obj.records:[]);
   const accounts=Array.isArray(obj.accounts)?obj.accounts:[];
   const transfers=Array.isArray(obj.transfers)?obj.transfers:[];
+  deleteRecordIds=Array.isArray(obj.deleteRecordIds)?obj.deleteRecordIds.map(String).filter(Boolean):[];
   parsedRecords=arr.filter(valid).map(normalize);
   parsedAccounts=accounts.filter(validAccount).map(normalizeAccount);
   parsedTransfers=transfers.filter(validTransfer).map(normalizeTransfer);
@@ -101,8 +102,8 @@ async function readSelectedFile(file){
   const asset=parsedAccounts.reduce((a,r)=>a+r.balance,0);
   $('count').textContent=parsedRecords.length;$('accountCount').textContent=parsedAccounts.length;$('transferCount').textContent=parsedTransfers.length;
   $('income').textContent=money(inc);$('expense').textContent=money(exp);$('assetTotal').textContent=money(asset);$('preview').classList.remove('hidden');
-  setStatus('fileStatus','已讀取：'+file.name,'ok');ready()
- }catch(e){parsedRecords=[];parsedAccounts=[];parsedTransfers=[];$('preview').classList.add('hidden');setStatus('fileStatus','檔案解析失敗：'+e.message,'bad');ready()}
+  setStatus('fileStatus','已讀取：'+file.name+(deleteRecordIds.length?'｜將修正 '+deleteRecordIds.length+' 筆舊紀錄':''),'ok');ready()
+ }catch(e){parsedRecords=[];parsedAccounts=[];parsedTransfers=[];deleteRecordIds=[];$('preview').classList.add('hidden');setStatus('fileStatus','檔案解析失敗：'+e.message,'bad');ready()}
 }
 $('file').addEventListener('change',e=>readSelectedFile(e.target.files&&e.target.files[0]));
 $('file').addEventListener('input',e=>readSelectedFile(e.target.files&&e.target.files[0]));
@@ -110,7 +111,7 @@ $('importBtn').onclick=async()=>{
  if(!currentUser||(parsedRecords.length+parsedAccounts.length+parsedTransfers.length)===0)return;
  $('importBtn').disabled=true;$('fill').style.width='5%';setStatus('importStatus','正在比對目前雲端資料…');
  try{
-  let addedRecords=0,addedAccounts=0,addedTransfers=0;
+  let addedRecords=0,addedAccounts=0,addedTransfers=0,deletedRecords=0;
   async function mergeInto(name,list){
     if(!list.length)return 0;
     const col=collection(db,'users',currentUser.uid,name),before=await getDocs(col),existing=new Set(before.docs.map(d=>d.id)),todo=list.filter(r=>!existing.has(r.id));
@@ -118,6 +119,7 @@ $('importBtn').onclick=async()=>{
     for(let i=0;i<todo.length;i+=300){const part=todo.slice(i,i+300),batch=writeBatch(db);part.forEach(r=>batch.set(doc(db,'users',currentUser.uid,name,r.id),r));await batch.commit();done+=part.length}
     return done;
   }
+  if(deleteRecordIds.length){const delBatch=writeBatch(db);deleteRecordIds.forEach(id=>delBatch.delete(doc(db,'users',currentUser.uid,'records',id)));await delBatch.commit();deletedRecords=deleteRecordIds.length}
   addedRecords=await mergeInto('records',parsedRecords);$('fill').style.width='40%';
   addedAccounts=await mergeInto('accounts',parsedAccounts);$('fill').style.width='70%';
   addedTransfers=await mergeInto('transfers',parsedTransfers);$('fill').style.width='90%';
@@ -127,7 +129,7 @@ $('importBtn').onclick=async()=>{
     getDocs(collection(db,'users',currentUser.uid,'transfers'))
   ]);
   $('fill').style.width='100%';
-  setStatus('importStatus','匯入完成：交易 +'+addedRecords+'、帳戶 +'+addedAccounts+'、轉移 +'+addedTransfers+'。\n目前 records '+r.size+' 筆｜accounts '+a.size+' 筆｜transfers '+t.size+' 筆。','ok');
+  setStatus('importStatus','匯入完成：交易 +'+addedRecords+(deletedRecords?'、修正刪除 '+deletedRecords:'')+'、帳戶 +'+addedAccounts+'、轉移 +'+addedTransfers+'。\n目前 records '+r.size+' 筆｜accounts '+a.size+' 筆｜transfers '+t.size+' 筆。','ok');
  }catch(e){$('fill').style.width='0%';setStatus('importStatus','匯入失敗：'+(e.code||'')+'\n'+(e.message||e),'bad')}
  ready()
 };
