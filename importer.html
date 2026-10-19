@@ -31,7 +31,7 @@ a{color:var(--gold2)}
 <div class="field"><label>Email</label><input id="email" type="email" autocomplete="email" placeholder="your@email.com"></div>
 <div class="field"><label>密碼</label><input id="password" type="password" autocomplete="current-password" placeholder="至少 6 字元"></div>
 <div class="row"><button class="primary" id="loginBtn">登入</button><button class="secondary" id="logoutBtn">登出</button></div>
-<div id="authStatus" class="status">尚未登入</div>
+<div id="authStatus" class="status">正在恢復上次登入…</div>
 </div>
 </section>
 
@@ -69,10 +69,19 @@ a{color:var(--gold2)}
 <script type="module">
 const CONFIG={"apiKey":"AIzaSyC087aIFhA38EZZg1dC9a3OHt1WsW29a10","authDomain":"mujin-ledger.firebaseapp.com","projectId":"mujin-ledger","storageBucket":"mujin-ledger.firebasestorage.app","messagingSenderId":"115562432444","appId":"1:115562432444:web:61c83e510ec0e01e0e0db9"};
 const base='https://www.gstatic.com/firebasejs/11.10.0/';
-const [{initializeApp},{getAuth,signInWithEmailAndPassword,signOut,onAuthStateChanged},{getFirestore,collection,doc,writeBatch,getDocs}]=await Promise.all([
+const [{initializeApp},{getAuth,signInWithEmailAndPassword,signOut,onAuthStateChanged,setPersistence,indexedDBLocalPersistence,browserLocalPersistence},{getFirestore,collection,doc,writeBatch,getDocs}]=await Promise.all([
  import(base+'firebase-app.js'),import(base+'firebase-auth.js'),import(base+'firebase-firestore.js')
 ]);
 const app=initializeApp(CONFIG),auth=getAuth(app),db=getFirestore(app);
+async function keepLogin(){
+  for(const persistence of [indexedDBLocalPersistence,browserLocalPersistence]){
+    try{await setPersistence(auth,persistence);return true}
+    catch(error){}
+  }
+  return false;
+}
+const persistentLoginAvailable=await keepLogin();
+
 let currentUser=null,parsedRecords=[],parsedAccounts=[],parsedTransfers=[],deleteRecordIds=[];
 const $=id=>document.getElementById(id);
 const money=n=>'NT$ '+Number(n||0).toLocaleString('zh-TW',{maximumFractionDigits:2});
@@ -84,8 +93,8 @@ function normalizeAccount(a){return{id:String(a.id).slice(0,80),name:String(a.na
 function validTransfer(t){return t&&typeof t==='object'&&typeof t.id==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(String(t.date||''))&&Number(t.amount)>0&&typeof t.fromAccountId==='string'&&typeof t.toAccountId==='string'&&t.fromAccountId!==t.toAccountId}
 function normalizeTransfer(t){return{id:String(t.id).slice(0,120),date:String(t.date),description:String(t.description||'帳戶轉移').slice(0,80),amount:Number(t.amount),fromAccountId:String(t.fromAccountId).slice(0,80),toAccountId:String(t.toAccountId).slice(0,80),createdAt:Number(t.createdAt||Date.now())}}
 function ready(){const count=parsedRecords.length+parsedAccounts.length+parsedTransfers.length;const ok=!!currentUser&&count>0;$('importBtn').disabled=!ok;$('verifyBtn').disabled=!currentUser}
-onAuthStateChanged(auth,u=>{currentUser=u;if(u){setStatus('authStatus','已登入：'+(u.email||'')+'\nUID：'+u.uid,'ok')}else setStatus('authStatus','尚未登入');ready()});
-$('loginBtn').onclick=async()=>{try{setStatus('authStatus','登入中…');await signInWithEmailAndPassword(auth,$('email').value.trim(),$('password').value);$('password').value=''}catch(e){setStatus('authStatus','登入失敗：'+(e.code||e.message),'bad')}};
+onAuthStateChanged(auth,u=>{currentUser=u;if(u){setStatus('authStatus','已登入：'+(u.email||'')+'\nUID：'+u.uid+'\n已啟用自動恢復登入','ok')}else setStatus('authStatus','尚未登入'+(persistentLoginAvailable?'':'（此瀏覽器限制持久登入）'));ready()},e=>setStatus('authStatus','恢復登入失敗：'+String(e.code||e.message),'bad'));
+$('loginBtn').onclick=async()=>{try{setStatus('authStatus','登入中…');await keepLogin();await signInWithEmailAndPassword(auth,$('email').value.trim(),$('password').value);$('password').value=''}catch(e){setStatus('authStatus','登入失敗：'+(e.code||e.message),'bad')}};
 $('logoutBtn').onclick=async()=>{await signOut(auth);setStatus('importStatus','已登出')};
 function parseJsonText(text,label='貼上內容'){
  try{
