@@ -1,0 +1,34 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{userId}/records/{recordId} {
+      function owner() {
+        return request.auth != null && request.auth.uid == userId;
+      }
+      function validRecord() {
+        return request.resource.data.keys().hasAll([
+          'id', 'date', 'description', 'amount', 'category', 'type', 'createdAt'
+        ]) && request.resource.data.keys().hasOnly([
+          'id', 'date', 'description', 'amount', 'category', 'type', 'createdAt'
+        ]) && request.resource.data.id is string
+           && request.resource.data.id == recordId
+           && request.resource.data.id.size() <= 120
+           && request.resource.data.date is string
+           && request.resource.data.date.size() == 10
+           && request.resource.data.description is string
+           && request.resource.data.description.size() > 0
+           && request.resource.data.description.size() <= 120
+           && request.resource.data.amount is number
+           && request.resource.data.amount > 0
+           && request.resource.data.amount <= 999999999
+           && request.resource.data.category is string
+           && request.resource.data.category.size() <= 20
+           && request.resource.data.type in ['income', 'expense']
+           && request.resource.data.createdAt is number;
+      }
+      allow read: if owner();
+      allow create, update: if owner() && validRecord();
+      allow delete: if owner();
+    }
+  }
+}
