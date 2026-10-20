@@ -1,5 +1,5 @@
 /* Mujin Ledger - app-shell only. No finance or Firebase data is cached here. */
-const CACHE_NAME = 'mujin-shell-v2-1-login-persistent-20261020';
+const CACHE_NAME = 'mujin-shell-v2-1-savings-transfer-fix-20261020';
 const SHELL = ['./', './index.html', './pwa.css', './install-guide.js', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting()).catch(() => {}));
